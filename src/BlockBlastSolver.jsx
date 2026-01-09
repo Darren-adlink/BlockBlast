@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, RotateCcw, Trash2, Check, AlertCircle, Hand, MousePointer2, Undo2, Settings2, Eraser, Cpu, BrainCircuit, X, BookOpen } from 'lucide-react';
+import { Play, RotateCcw, Trash2, Check, AlertCircle, Hand, MousePointer2, Undo2, Settings2, Eraser, Cpu, BrainCircuit, X, BookOpen, Camera, Upload, Scan, Move, ZoomIn, Search, ArrowUp, ArrowDown, Info } from 'lucide-react';
 
 // --- 常數設定 ---
 const BOARD_SIZE = 8;
@@ -17,7 +17,7 @@ const EMPTY_PIECES = [
   createEmptyGrid(PIECE_GRID_SIZE)
 ];
 
-// --- 保留的難題範例 (死局求生) ---
+// --- 範例數據 ---
 const SAMPLE_BOARD = [
   [0,0,0,1,1,1,1,1],
   [1,0,0,1,0,1,1,1],
@@ -30,28 +30,13 @@ const SAMPLE_BOARD = [
 ].map(row => row.map(cell => cell === 1));
 
 const SAMPLE_PIECES = [
-  // 1x2 橫條
-  (() => {
-    const g = createEmptyGrid(PIECE_GRID_SIZE);
-    g[0][0] = true; g[0][1] = true;
-    return g;
-  })(),
-  // 2x2 斜角
-  (() => {
-    const g = createEmptyGrid(PIECE_GRID_SIZE);
-    g[0][0] = true; g[1][1] = true;
-    return g;
-  })(),
-  // 3x3 大方塊
-  (() => {
-    const g = createEmptyGrid(PIECE_GRID_SIZE);
-    for(let r=0; r<3; r++) for(let c=0; c<3; c++) g[r][c] = true;
-    return g;
-  })()
+  (() => { const g = createEmptyGrid(PIECE_GRID_SIZE); g[0][0]=true; g[0][1]=true; return g; })(),
+  (() => { const g = createEmptyGrid(PIECE_GRID_SIZE); g[0][0]=true; g[1][1]=true; return g; })(),
+  (() => { const g = createEmptyGrid(PIECE_GRID_SIZE); for(let r=0;r<3;r++) for(let c=0;c<3;c++) g[r][c]=true; return g; })()
 ];
 
 // ==========================================
-//  核心引擎：位元矩陣運算 (Bitwise Engine)
+//  核心引擎：位元矩陣運算
 // ==========================================
 const BitwiseEngine = {
   toBitboard: (grid) => {
@@ -112,7 +97,7 @@ const BitwiseEngine = {
       mask,
       height: maxR - minR + 1,
       width: maxC - minC + 1,
-      grid: grid // 保留原始形狀供 UI 顯示
+      grid: grid 
     };
   },
 
@@ -148,20 +133,16 @@ const BitwiseEngine = {
     return nextBoard;
   },
 
-  // --- DFS 求解器 ---
   solve: async (startBoard, pieces) => {
     const boardBB = BitwiseEngine.toBitboard(startBoard);
     
-    // 預處理 pieces，轉換為 bitmask 資料結構，並加上 ID 以便追蹤
     const activePieces = pieces
       .map((p, idx) => ({ id: idx, data: BitwiseEngine.getPieceBitmask(p) }))
       .filter(p => p.data !== null);
 
     if (activePieces.length === 0) return [];
 
-    // 遞迴函數
     const findSolution = (currentBB, remainingPieces, path) => {
-      // Base Case: 所有方塊都放完了
       if (remainingPieces.length === 0) {
         return path;
       }
@@ -169,7 +150,6 @@ const BitwiseEngine = {
       const currentPiece = remainingPieces[0];
       const others = remainingPieces.slice(1);
 
-      // 嘗試所有位置
       for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
           if (BitwiseEngine.canPlace(currentBB, currentPiece.data, r, c)) {
@@ -188,7 +168,6 @@ const BitwiseEngine = {
       return null;
     };
 
-    // 排列組合產生器
     const getPermutations = (arr) => {
       if (arr.length <= 1) return [arr];
       const output = [];
@@ -205,7 +184,6 @@ const BitwiseEngine = {
 
     const orders = getPermutations(activePieces);
     
-    // 嘗試每一種順序
     for (let order of orders) {
       const result = findSolution(boardBB, order, []);
       if (result) return result;
@@ -216,24 +194,42 @@ const BitwiseEngine = {
 };
 
 export default function BlockBlastSolver() {
-  // --- 狀態 ---
-  const [mode, setMode] = useState('edit'); // 'edit', 'play', 'solving', 'solution'
+  const [mode, setMode] = useState('edit'); 
   const [board, setBoard] = useState(EMPTY_BOARD);
   const [pieces, setPieces] = useState(EMPTY_PIECES);
   
-  // Play Mode 狀態
+  // --- Scan Mode 狀態 ---
+  const [uploadedImage, setUploadedImage] = useState(null);
+  
+  // 只保留 Board (紅) 覆蓋層
+  const [gridOverlay, setGridOverlay] = useState({ x: 20, y: 100, size: 300 }); 
+  
+  const fileInputRef = useRef(null);
+  const canvasRef = useRef(null);
+  const imageRef = useRef(null);
+  
+  // 拖曳狀態
+  const [isDragging, setIsDragging] = useState(false); // false, 'move', 'resize'
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0, startX: 0, startSize: 0 });
+  
+  // Play/Solution 狀態
   const [history, setHistory] = useState([]);
   const [selectedPieceIdx, setSelectedPieceIdx] = useState(null);
   const [hoverPos, setHoverPos] = useState(null);
   const [initialRoundState, setInitialRoundState] = useState(null);
-
-  // Solution Mode 狀態
   const [solutionSteps, setSolutionSteps] = useState(null);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   const [solverError, setSolverError] = useState("");
+  const [notification, setNotification] = useState(null); 
+
+  const showToast = (type, message) => {
+    setNotification({ type, message });
+    setTimeout(() => {
+        setNotification(null);
+    }, 3000);
+  };
 
   // --- 操作邏輯 ---
-
   const toggleBoardCell = (r, c) => {
     if (mode !== 'edit') return;
     const newBoard = cloneGrid(board);
@@ -256,15 +252,196 @@ export default function BlockBlastSolver() {
     setPieces(newPieces);
   };
 
-  // 載入範例題目
-  const loadSample = () => {
-    if (window.confirm("確定要載入範例難題嗎？目前的繪製會被覆蓋。")) {
-      setBoard(cloneGrid(SAMPLE_BOARD));
-      setPieces(SAMPLE_PIECES.map(p => cloneGrid(p)));
-      setMode('edit');
-      setSolutionSteps(null);
-      setHistory([]);
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setUploadedImage(event.target.result);
+        setMode('scan');
+        // 重置位置
+        setGridOverlay({ x: 30, y: 50, size: 280 }); 
+      };
+      reader.readAsDataURL(file);
     }
+    e.target.value = null; 
+  };
+
+  // --- 核心掃描 (只掃棋盤 Board) ---
+  const analyzePixels = () => {
+    const canvas = canvasRef.current;
+    const img = imageRef.current;
+    if (!canvas || !img) return;
+
+    const ctx = canvas.getContext('2d');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    ctx.drawImage(img, 0, 0);
+
+    const scaleX = canvas.width / img.width;
+    const scaleY = canvas.height / img.height;
+
+    console.group("🔍 Analysis Start (Board Only)");
+
+    // === 掃描棋盤 (Red) ===
+    const boardStartX = gridOverlay.x * scaleX;
+    const boardStartY = gridOverlay.y * scaleY;
+    const boardCellSize = (gridOverlay.size * scaleX) / 8;
+    
+    // 收集所有中位數來計算動態閾值
+    const boardStats = [];
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      const lineY = Math.floor(boardStartY + r * boardCellSize + boardCellSize / 2);
+      if (lineY < 0 || lineY >= canvas.height) continue;
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const segStartX = Math.floor(boardStartX + c * boardCellSize);
+        const segEndX = Math.floor(boardStartX + (c + 1) * boardCellSize);
+        if (segStartX < 0 || segEndX > canvas.width) continue;
+        
+        const scanHeight = 3; 
+        const scanYStart = Math.max(0, lineY - 1);
+        const imgData = ctx.getImageData(segStartX, scanYStart, (segEndX - segStartX), scanHeight);
+        const stats = getRegionStats(imgData.data);
+        boardStats.push({ r, c, ...stats });
+      }
+    }
+    
+    const boardThreshold = calculateAdaptiveThreshold(boardStats.map(s => s.b));
+    console.log("Board Adaptive Threshold:", boardThreshold);
+
+    const newBoard = createEmptyGrid(BOARD_SIZE);
+    boardStats.forEach(stat => {
+        // 棋盤判定
+        if (stat.b > boardThreshold || stat.s > 75) {
+            newBoard[stat.r][stat.c] = true;
+        }
+    });
+
+    console.groupEnd();
+
+    setBoard(newBoard);
+    // 重置手牌，讓使用者自己畫
+    setPieces(EMPTY_PIECES.map(p => cloneGrid(p)));
+    setMode('edit');
+    showToast('success', "棋盤掃描完成！請手動繪製下方方塊。");
+  };
+
+  // Helper: 計算區域統計 (中位數)
+  const getRegionStats = (data) => {
+    const brightnessValues = [];
+    const saturationValues = [];
+    for (let i = 0; i < data.length; i += 4) {
+        const R = data[i], G = data[i+1], B = data[i+2];
+        brightnessValues.push((R+G+B)/3);
+        saturationValues.push(Math.max(R,G,B) - Math.min(R,G,B));
+    }
+    brightnessValues.sort((a,b)=>a-b);
+    saturationValues.sort((a,b)=>a-b);
+    const mid = Math.floor(brightnessValues.length/2);
+    return { b: brightnessValues[mid] || 0, s: saturationValues[mid] || 0 };
+  };
+
+  // Helper: 計算動態閾值
+  const calculateAdaptiveThreshold = (values) => {
+      const sorted = [...values].sort((a,b)=>a-b);
+      let maxGap = 0, gapIndex = 0;
+      // 忽略頭尾 10% 避免極端值
+      const start = Math.floor(sorted.length * 0.1);
+      const end = Math.floor(sorted.length * 0.9);
+      
+      for(let i=start; i<end; i++) {
+          const gap = sorted[i+1] - sorted[i];
+          if(gap > maxGap) { maxGap = gap; gapIndex = i; }
+      }
+      // 如果斷層不明顯，回退到預設值
+      if (maxGap < 10) return 90;
+      return (sorted[gapIndex] + sorted[gapIndex+1]) / 2;
+  };
+
+  // --- 拖曳邏輯 (僅 Board) ---
+  const handleMoveLogic = (clientX, clientY) => {
+    if (!isDragging) return;
+    
+    if (isDragging === 'move') {
+        setGridOverlay({
+            ...gridOverlay,
+            x: clientX - dragStart.x,
+            y: clientY - dragStart.y
+        });
+    } else if (isDragging === 'resize') {
+        const delta = clientX - dragStart.startX;
+        setGridOverlay({
+            ...gridOverlay,
+            size: Math.max(100, dragStart.startSize + delta)
+        });
+    }
+  };
+
+  const handleMouseDownMove = (e) => {
+    e.stopPropagation();
+    setIsDragging('move');
+    setDragStart({ x: e.clientX - gridOverlay.x, y: e.clientY - gridOverlay.y, startX: 0, startSize: 0 });
+  };
+  
+  const handleMouseDownResize = (e) => {
+     e.stopPropagation();
+     setIsDragging('resize');
+     setDragStart({ startSize: gridOverlay.size, startX: e.clientX, x: 0, y: 0 });
+  };
+
+  const handleTouchStartMove = (e) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    setIsDragging('move');
+    setDragStart({ x: touch.clientX - gridOverlay.x, y: touch.clientY - gridOverlay.y, startX: 0, startSize: 0 });
+  };
+
+  const handleTouchStartResize = (e) => {
+    e.stopPropagation();
+    const touch = e.touches[0];
+    setIsDragging('resize');
+    setDragStart({ startSize: gridOverlay.size, startX: touch.clientX, x: 0, y: 0 });
+  };
+
+  const handleWindowMouseMove = (e) => {
+    if (isDragging) handleMoveLogic(e.clientX, e.clientY);
+  };
+
+  const handleWindowTouchMove = (e) => {
+    if (isDragging) {
+        if (e.cancelable) e.preventDefault(); 
+        const touch = e.touches[0];
+        handleMoveLogic(touch.clientX, touch.clientY);
+    }
+  };
+
+  const handleWindowEnd = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+        window.addEventListener('mousemove', handleWindowMouseMove);
+        window.addEventListener('mouseup', handleWindowEnd);
+        window.addEventListener('touchmove', handleWindowTouchMove, { passive: false });
+        window.addEventListener('touchend', handleWindowEnd);
+    } else {
+        window.removeEventListener('mousemove', handleWindowMouseMove);
+        window.removeEventListener('mouseup', handleWindowEnd);
+        window.removeEventListener('touchmove', handleWindowTouchMove);
+        window.removeEventListener('touchend', handleWindowEnd);
+    }
+    return () => {
+        window.removeEventListener('mousemove', handleWindowMouseMove);
+        window.removeEventListener('mouseup', handleWindowEnd);
+        window.removeEventListener('touchmove', handleWindowTouchMove);
+        window.removeEventListener('touchend', handleWindowEnd);
+    };
+  }, [isDragging, gridOverlay]);
+
+  const scrollPage = (amount) => {
+    window.scrollBy({ top: amount, behavior: 'smooth' });
   };
 
   // --- AI 求解 ---
@@ -273,17 +450,30 @@ export default function BlockBlastSolver() {
     setSolverError("");
     
     setTimeout(async () => {
-      const result = await BitwiseEngine.solve(board, pieces);
-      if (result) {
-        setSolutionSteps(result);
-        setCurrentStepIdx(0);
-        setMode('solution');
-        setInitialRoundState({
-            board: cloneGrid(board),
-            pieces: pieces.map(p => cloneGrid(p))
-        });
-      } else {
-        setSolverError("AI 算盡了所有排列組合，發現此局無解！建議檢查題目是否輸入正確。");
+      try {
+        const hasPieces = pieces.some(p => BitwiseEngine.getPieceBitmask(p) !== null);
+        if (!hasPieces) {
+             setSolverError("請至少繪製一個方塊！");
+             setMode('edit');
+             return;
+        }
+
+        const result = await BitwiseEngine.solve(board, pieces);
+        if (result && result.length > 0) {
+          setSolutionSteps(result);
+          setCurrentStepIdx(0);
+          setMode('solution');
+          setInitialRoundState({
+              board: cloneGrid(board),
+              pieces: pieces.map(p => cloneGrid(p))
+          });
+        } else {
+          setSolverError("AI 運算完畢：無解！");
+          setMode('edit');
+        }
+      } catch (error) {
+        console.error(error);
+        setSolverError("發生錯誤，請重試。");
         setMode('edit');
       }
     }, 100);
@@ -293,7 +483,7 @@ export default function BlockBlastSolver() {
   const startSimulation = () => {
     const hasPieces = pieces.some(p => BitwiseEngine.getPieceBitmask(p) !== null);
     if (!hasPieces) {
-      alert("請至少繪製一個方塊！");
+      showToast('error', "請至少繪製一個方塊！"); // 替換 alert
       return;
     }
     setInitialRoundState({
@@ -313,6 +503,16 @@ export default function BlockBlastSolver() {
     if (initialRoundState) {
         setBoard(initialRoundState.board);
         setPieces(initialRoundState.pieces);
+    }
+  };
+
+  const loadSample = () => {
+    if (window.confirm("載入範例難題？")) {
+      setBoard(cloneGrid(SAMPLE_BOARD));
+      setPieces(SAMPLE_PIECES.map(p => cloneGrid(p)));
+      setMode('edit');
+      setSolutionSteps(null);
+      setHistory([]);
     }
   };
 
@@ -355,7 +555,6 @@ export default function BlockBlastSolver() {
     setSelectedPieceIdx(null);
   };
 
-  // --- 預覽邏輯 ---
   const getPreviewCells = () => {
     let targetPiece = null;
     let targetR = -1, targetC = -1;
@@ -366,12 +565,14 @@ export default function BlockBlastSolver() {
       targetR = hoverPos.r;
       targetC = hoverPos.c;
       checkValid = true;
-    } else if (mode === 'solution' && solutionSteps) {
+    } else if (mode === 'solution' && solutionSteps && solutionSteps.length > 0) {
       const step = solutionSteps[currentStepIdx];
-      targetPiece = initialRoundState.pieces[step.pieceId];
-      targetR = step.r;
-      targetC = step.c;
-      checkValid = false;
+      if (step && initialRoundState && initialRoundState.pieces && initialRoundState.pieces[step.pieceId]) {
+          targetPiece = initialRoundState.pieces[step.pieceId];
+          targetR = step.r;
+          targetC = step.c;
+          checkValid = false;
+      }
     }
 
     if (!targetPiece) return { cells: [], isValid: false, isSolution: false };
@@ -412,7 +613,6 @@ export default function BlockBlastSolver() {
 
   const previewData = getPreviewCells();
 
-  // --- 解答演示控制 ---
   const nextStep = () => {
     if (!solutionSteps) return;
     if (currentStepIdx < solutionSteps.length - 1) {
@@ -435,27 +635,36 @@ export default function BlockBlastSolver() {
   };
 
   useEffect(() => {
-      if (mode === 'solution' && initialRoundState && solutionSteps) {
+      if (mode === 'solution' && initialRoundState && solutionSteps && solutionSteps.length > 0) {
           if (currentStepIdx === 0) {
               setBoard(initialRoundState.board);
-          } else {
+          } else if (solutionSteps[currentStepIdx - 1]) {
               setBoard(BitwiseEngine.fromBitboard(solutionSteps[currentStepIdx - 1].boardAfter));
           }
       }
   }, [currentStepIdx, mode, solutionSteps, initialRoundState]);
 
-
   // --- Render ---
   return (
     <div className="min-h-screen bg-slate-50 p-2 sm:p-4 font-sans text-slate-800 select-none">
+      
+      {/* Toast Notification (固定在最上方) */}
+      {notification && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-5 duration-300 ${
+            notification.type === 'error' ? 'bg-red-500 text-white' : 'bg-green-600 text-white'
+        }`}>
+            {notification.type === 'error' ? <AlertCircle size={20}/> : <Check size={20}/>}
+            <span className="font-bold">{notification.message}</span>
+        </div>
+      )}
+
       <div className="max-w-md mx-auto">
         
         <header className="mb-4 text-center">
           <h1 className="text-2xl font-extrabold text-slate-900 flex items-center justify-center gap-2">
-            Block Blast 終極破解 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded border border-purple-200 flex items-center gap-1"><BrainCircuit size={12}/> AI 運算</span>
+            Block Blast 終極破解 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded border border-purple-200 flex items-center gap-1"><BrainCircuit size={12}/> V2.5</span>
           </h1>
           
-          {/* 控制按鈕區 */}
           <div className="flex flex-wrap justify-center gap-2 mt-4">
             {mode === 'edit' && (
               <>
@@ -474,17 +683,17 @@ export default function BlockBlastSolver() {
               </>
             )}
 
-            {(mode === 'play' || mode === 'solution') && (
+            {(mode === 'play' || mode === 'solution' || mode === 'scan') && (
               <button 
                 onClick={stopMode}
                 className="flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-full font-bold hover:bg-slate-300 transition-all"
               >
-                <Settings2 size={18} /> 回到編輯 / 重置
+                <Settings2 size={18} /> 
+                {mode === 'scan' ? '取消掃描' : '回到編輯'}
               </button>
             )}
           </div>
           
-          {/* 錯誤訊息 */}
           {solverError && (
              <div className="mt-2 bg-red-100 text-red-700 p-2 rounded text-sm flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-2">
                <AlertCircle size={16} /> {solverError}
@@ -492,7 +701,102 @@ export default function BlockBlastSolver() {
           )}
         </header>
 
-        {/* 主盤面 */}
+        {/* Scan Mode UI */}
+        {mode === 'scan' && uploadedImage && (
+             <div className="relative">
+                 {/* 上方：圖片編輯區 */}
+                 <div className="bg-slate-800 p-2 rounded-xl shadow-lg border border-slate-700 mb-24 relative overflow-hidden text-center select-none touch-none min-h-[500px]">
+                    <p className="text-white text-sm mb-2 font-bold flex items-center justify-center gap-2">
+                        <Move size={14}/> 拖曳紅框定位
+                    </p>
+                    
+                    <div className="relative inline-block w-full max-w-[350px]">
+                        <img 
+                            ref={imageRef}
+                            src={uploadedImage} 
+                            alt="Upload" 
+                            className="w-full h-auto rounded opacity-80 pointer-events-none select-none"
+                        />
+                        
+                        {/* Red Overlay (Board Only) */}
+                        <div 
+                            className="absolute border-2 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] z-10 box-border pointer-events-none"
+                            style={{
+                                left: gridOverlay.x,
+                                top: gridOverlay.y,
+                                width: gridOverlay.size,
+                                height: gridOverlay.size,
+                                backgroundImage: `
+                                    linear-gradient(to right, rgba(255,0,0,0.3) 1px, transparent 1px),
+                                    linear-gradient(to bottom, rgba(255,0,0,0.3) 1px, transparent 1px)
+                                `,
+                                backgroundSize: `${gridOverlay.size/8}px ${gridOverlay.size/8}px`
+                            }}
+                        >
+                             <div 
+                                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 bg-red-500/30 rounded-full cursor-move flex items-center justify-center pointer-events-auto active:bg-red-500/60 transition-colors"
+                                onMouseDown={handleMouseDownMove}
+                                onTouchStart={handleTouchStartMove}
+                             >
+                                 <Move size={24} className="text-white drop-shadow-md"/>
+                             </div>
+
+                             <div 
+                                className="absolute bottom-0 right-0 w-8 h-8 bg-red-500 cursor-se-resize flex items-center justify-center rounded-tl opacity-80 pointer-events-auto"
+                                onMouseDown={handleMouseDownResize}
+                                onTouchStart={handleTouchStartResize}
+                             >
+                                <ZoomIn size={18} className="text-white pointer-events-none"/>
+                             </div>
+                             
+                             <div className="absolute -top-6 left-0 bg-red-500 text-white text-xs px-2 py-1 rounded font-bold shadow-md">
+                                 棋盤區 (8x8)
+                             </div>
+                        </div>
+                    </div>
+                    {/* Hidden Canvas for Processing */}
+                    <canvas ref={canvasRef} className="hidden" />
+                 </div>
+
+                 {/* 1. 懸浮捲動按鈕 (右下角) */}
+                 <div className="fixed right-4 bottom-24 flex flex-col gap-3 z-50">
+                    <button 
+                        onClick={() => scrollPage(-200)}
+                        className="p-3 bg-white/90 text-slate-700 rounded-full shadow-lg border border-slate-200 active:scale-95 active:bg-slate-100"
+                        title="向上捲動"
+                    >
+                        <ArrowUp size={24} />
+                    </button>
+                    <button 
+                        onClick={() => scrollPage(200)}
+                        className="p-3 bg-white/90 text-slate-700 rounded-full shadow-lg border border-slate-200 active:scale-95 active:bg-slate-100"
+                        title="向下捲動"
+                    >
+                        <ArrowDown size={24} />
+                    </button>
+                 </div>
+
+                 {/* 2. 底部固定操作列 (Sticky Footer) */}
+                 <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 z-50 flex gap-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+                    <button 
+                        onClick={stopMode}
+                        className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 active:scale-95 transition-all"
+                    >
+                        取消
+                    </button>
+                    <button 
+                        onClick={analyzePixels}
+                        className="flex-[2] py-3 bg-green-600 text-white rounded-xl font-bold shadow-lg hover:bg-green-700 active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        <Scan size={20} /> 掃描分析 (僅棋盤)
+                    </button>
+                 </div>
+             </div>
+        )}
+
+
+        {/* 主盤面 (Edit/Play/Solution Mode) */}
+        {mode !== 'scan' && (
         <div className="bg-white p-3 rounded-xl shadow-lg border border-slate-200 mb-6 relative">
           
           <div className="flex justify-between items-center mb-2 px-1">
@@ -505,14 +809,27 @@ export default function BlockBlastSolver() {
             
             <div className="flex gap-2">
                 {mode === 'edit' && (
-                  <button onClick={loadSample} className="text-xs text-indigo-600 flex items-center gap-1 hover:bg-indigo-50 px-2 py-1 rounded font-bold">
-                    <BookOpen size={14} /> 載入範例難題
-                  </button>
-                )}
-                {mode === 'edit' && (
-                <button onClick={clearBoard} className="text-xs text-red-500 flex items-center gap-1 hover:bg-red-50 px-2 py-1 rounded">
-                    <Eraser size={14} /> 清空盤面
-                </button>
+                  <>
+                    <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        className="hidden" 
+                        accept="image/*" 
+                        onChange={handleFileUpload}
+                    />
+                    <button 
+                        onClick={() => fileInputRef.current?.click()} 
+                        className="text-xs bg-slate-100 text-slate-700 flex items-center gap-1 hover:bg-slate-200 px-3 py-1 rounded font-bold border border-slate-300 transition-colors"
+                    >
+                        <Camera size={14} /> 上傳
+                    </button>
+                    <button onClick={loadSample} className="text-xs text-indigo-600 flex items-center gap-1 hover:bg-indigo-50 px-2 py-1 rounded font-bold">
+                        <BookOpen size={14} /> 範例
+                    </button>
+                    <button onClick={clearBoard} className="text-xs text-red-500 flex items-center gap-1 hover:bg-red-50 px-2 py-1 rounded">
+                        <Eraser size={14} /> 清空
+                    </button>
+                  </>
                 )}
             </div>
             
@@ -526,7 +843,7 @@ export default function BlockBlastSolver() {
               </button>
             )}
 
-            {mode === 'solution' && (
+            {mode === 'solution' && solutionSteps && (
                 <div className="text-sm font-bold text-green-600 flex items-center gap-1">
                     <Check size={16}/> 步驟 {currentStepIdx + 1} / {solutionSteps.length}
                 </div>
@@ -534,9 +851,10 @@ export default function BlockBlastSolver() {
           </div>
 
           {mode === 'solving' && (
-            <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-xl">
+            <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-xl animate-in fade-in duration-300">
                <Cpu className="animate-spin text-purple-600 mb-2" size={48} />
-               <p className="text-purple-800 font-bold">AI 正在嘗試數萬種排列...</p>
+               <p className="text-purple-800 font-bold">矩陣運算中...</p>
+               <p className="text-xs text-slate-500 mt-1">計算所有可能的消除路徑</p>
             </div>
           )}
 
@@ -587,7 +905,7 @@ export default function BlockBlastSolver() {
             ))}
           </div>
 
-          {mode === 'solution' && (
+          {mode === 'solution' && solutionSteps && (
              <div className="mt-4 flex justify-between gap-4">
                 <button 
                   onClick={prevStep} 
@@ -607,8 +925,10 @@ export default function BlockBlastSolver() {
           )}
 
         </div>
+        )}
 
-        {/* 手牌區 */}
+        {/* 手牌區 (僅在非 Scan Mode 顯示) */}
+        {mode !== 'scan' && (
         <div className="bg-slate-100 p-4 rounded-xl shadow-inner border border-slate-200">
           <div className="flex justify-between items-center mb-3">
              <h2 className="font-bold text-slate-700 flex items-center gap-2">
@@ -674,9 +994,10 @@ export default function BlockBlastSolver() {
               );
             })}
 
-            {mode === 'solution' && initialRoundState.pieces.map((pieceGrid, idx) => {
-                const isCurrentStepPiece = solutionSteps[currentStepIdx].pieceId === idx;
-                const isUsed = solutionSteps.slice(0, currentStepIdx).some(step => step.pieceId === idx);
+            {mode === 'solution' && solutionSteps && initialRoundState.pieces.map((pieceGrid, idx) => {
+                const step = solutionSteps[currentStepIdx];
+                const isCurrentStepPiece = step ? step.pieceId === idx : false;
+                const isUsed = solutionSteps.slice(0, currentStepIdx).some(s => s.pieceId === idx);
 
                 return (
                     <div 
@@ -713,6 +1034,7 @@ export default function BlockBlastSolver() {
             })}
           </div>
         </div>
+        )}
 
       </div>
     </div>
